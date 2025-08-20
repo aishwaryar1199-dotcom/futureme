@@ -14,15 +14,11 @@ Notes activity chart showing engagement over time
 Privacy-Focused: Notes are stored securely in Firebase Firestore; not even admins can view them.
 Real-Time Updates: Changes are reflected instantly on the dashboard and notes list.
 
-![1.png](futureme/README.md/1.png)
-
-
 Tech Stack
 Frontend: HTML, Tailwind CSS, JavaScript
 Icons: Phosphor Icons
 Backend / Database: Firebase Authentication & Firestore
 Fonts: Inter (Google Fonts)
-
 
 Usage
 "https://github.com/aishwaryar1199-dotcom/futureme.git"

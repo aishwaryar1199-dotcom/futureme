@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Future Me</title>
+    <!-- Inter Font -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Phosphor Icons for a dashboard look -->
+    <script src="https://unpkg.com/@phosphor-icons/web@2.0.3/dist/phosphor.js"></script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, collection, addDoc, onSnapshot, query, where, Timestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Message box element
+        const messageBox = document.getElementById('message-box');
+        const showMessage = (message, type = 'info') => {
+            messageBox.textContent = message;
+            messageBox.className = `p-4 mt-4 text-center rounded-lg ${type === 'error' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'} transition-all duration-300 transform`;
+            setTimeout(() => {
+                messageBox.className = `p-4 mt-4 text-center rounded-lg opacity-0 transition-all duration-300 transform -translate-y-2`;
+            }, 3000);
+        };
+
+        let db;
+        let auth;
+        let userId;
+
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        auth = getAuth(app);
+
+        // Authenticate the user
+        const authenticateUser = async () => {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication error:", error);
+                showMessage('Authentication failed. Please refresh the page.', 'error');
+            }
+        };
+
+        // Listen for auth state changes
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                document.getElementById('user-id-display').textContent = `User ID: ${userId}`;
+                showMessage('Authentication successful!', 'info');
+                // Fetch notes after authentication
+                fetchNotes();
+            } else {
+                console.log("No user is signed in.");
+                document.getElementById('user-id-display').textContent = 'User ID: Not authenticated';
+            }
+        });
+
+        // Simplified sentiment analysis based on emotion
+        const motivationalMessages = {
+            'sad': 'Remember, it’s okay to feel this way. Be kind to yourself, and know that brighter days are ahead. You’ve got this!',
+            'anxious': 'Take a deep breath. You are capable and strong. Focus on one small step at a time, and don’t forget to celebrate your progress.',
+            'tired': 'Rest is not a luxury, it’s a necessity. Listen to your body and give yourself the break you deserve. You will come back stronger.',
+            'angry': 'It’s valid to feel this way, but remember to let go of what you can’t control. Acknowledge your feelings, and then let them pass like clouds in the sky.',
+            'negative': 'Hey there. Thanks for being vulnerable. Your feelings are valid, but they do not define you. You are worthy, loved, and capable of overcoming any obstacles.'
+        };
+
+        // Handle form submission
+        document.getElementById('note-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const noteText = document.getElementById('note-text').value;
+            const unlockDate = document.getElementById('unlock-date').value;
+            const emotion = document.getElementById('emotion').value;
+            const imageFile = document.getElementById('image-upload').files[0];
+            
+            if (!noteText || !unlockDate) {
+                showMessage('Please fill in both the note and the unlock date.', 'error');
+                return;
+            }
+
+            // Simple check for negative keywords in the note text
+            const negativeKeywords = ['sad', 'anxious', 'depressed', 'tired', 'angry', 'unhappy', 'lonely'];
+            const negativeSentimentDetected = negativeKeywords.some(keyword => noteText.toLowerCase().includes(keyword));
+            const selectedEmotionIsNegative = ['sad', 'anxious', 'tired', 'angry'].includes(emotion);
+
+            let message = '';
+            if (selectedEmotionIsNegative || negativeSentimentDetected) {
+                message = motivationalMessages[emotion] || motivationalMessages['negative'];
+            }
+            
+            let imageDataURL = null;
+            if (imageFile) {
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    imageDataURL = event.target.result;
+                    await saveNote(noteText, unlockDate, emotion, imageDataURL, message);
+                };
+                reader.readAsDataURL(imageFile);
+            } else {
+                await saveNote(noteText, unlockDate, emotion, imageDataURL, message);
+            }
+        });
+
+        const saveNote = async (noteText, unlockDate, emotion, imageDataURL, motivationalMessage) => {
+            try {
+                const userNotesCollection = collection(db, `artifacts/${appId}/users/${userId}/future_notes`);
+                await addDoc(userNotesCollection, {
+                    note: noteText,
+                    unlockDate: Timestamp.fromDate(new Date(unlockDate)),
+                    emotion: emotion,
+                    image: imageDataURL,
+                    motivationalMessage: motivationalMessage,
+                    createdAt: Timestamp.now()
+                });
+
+                showMessage('Your note has been locked and will be unlocked on the specified date!', 'success');
+                document.getElementById('note-form').reset();
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                showMessage('An error occurred while saving your note. Please try again.', 'error');
+            }
+        };
+
+        // Function to update the dashboard metrics
+        const updateDashboard = (notes) => {
+            const now = new Date();
+            let unlockedCount = 0;
+            let lockedCount = 0;
+            const activeDays = new Set();
+            let weeklyInteractions = 0;
+            const lastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+            const dailyCounts = {};
+
+            notes.forEach(note => {
+                const noteDate = note.unlockDate.toDate();
+                if (noteDate <= now) {
+                    unlockedCount++;
+                } else {
+                    lockedCount++;
+                }
+
+                // Analytics for the past week
+                const createdAt = note.createdAt.toDate();
+                if (createdAt >= lastWeek) {
+                    weeklyInteractions++;
+                    activeDays.add(createdAt.toDateString());
+                    const dayKey = createdAt.toISOString().slice(0, 10);
+                    dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + 1;
+                }
+            });
+
+            // Update KPI cards
+            document.getElementById('total-notes').textContent = notes.length;
+            document.getElementById('unlocked-notes').textContent = unlockedCount;
+            document.getElementById('locked-notes').textContent = lockedCount;
+            document.getElementById('total-moods').textContent = notes.length;
+
+            // Update engagement summary
+            const notesUnlockedPercentage = notes.length > 0 ? ((unlockedCount / notes.length) * 100).toFixed(1) : 0;
+            document.getElementById('unlocked-percentage').textContent = `${notesUnlockedPercentage}%`;
+            document.getElementById('active-days').textContent = activeDays.size;
+            document.getElementById('interactions-this-week').textContent = weeklyInteractions;
+
+            // Update the notes activity over time chart
+            const chart = document.getElementById('notes-activity-chart');
+            chart.innerHTML = ''; // Clear previous bars
+            const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const todayIndex = now.getDay();
+            
+            for (let i = 0; i < 7; i++) {
+                const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (6 - i));
+                const dayKey = date.toISOString().slice(0, 10);
+                const count = dailyCounts[dayKey] || 0;
+                const height = Math.min(100, count * 20); // Scale bar height, max 100px
+                const dayLabel = daysOfWeek[date.getDay()];
+                
+                const bar = document.createElement('div');
+                bar.className = 'flex flex-col items-center w-1/7';
+                bar.innerHTML = `
+                    <div class="h-[100px] w-8 bg-gray-700 rounded-md flex items-end overflow-hidden">
+                        <div class="w-full bg-blue-500 rounded-t-md transition-all duration-300 ease-in-out" style="height:${height}px;"></div>
+                    </div>
+                    <span class="mt-2 text-sm text-gray-400">${dayLabel}</span>
+                `;
+                chart.appendChild(bar);
+            }
+        };
+
+        // Listen for notes and update the UI in real-time
+        const fetchNotes = () => {
+            if (!userId) return;
+
+            const userNotesCollection = collection(db, `artifacts/${appId}/users/${userId}/future_notes`);
+            
+            // Listen for real-time changes
+            onSnapshot(userNotesCollection, (querySnapshot) => {
+                const notes = [];
+                const now = new Date();
+                const lockedNotesList = document.getElementById('locked-notes-list');
+                const unlockedNotesList = document.getElementById('unlocked-notes-list');
+
+                lockedNotesList.innerHTML = '';
+                unlockedNotesList.innerHTML = '';
+
+                querySnapshot.forEach((doc) => {
+                    notes.push({ id: doc.id, ...doc.data() });
+                });
+
+                notes.sort((a, b) => a.unlockDate.toDate() - b.unlockDate.toDate());
+
+                notes.forEach(note => {
+                    const noteDate = note.unlockDate.toDate();
+                    const noteElement = document.createElement('div');
+                    noteElement.className = 'bg-gray-800 p-6 rounded-xl shadow-lg';
+                    
+                    if (noteDate <= now) {
+                        // Unlocked note
+                        noteElement.innerHTML = `
+                            <h3 class="text-xl font-semibold mb-2 text-white">Note from ${noteDate.toLocaleDateString()}</h3>
+                            <p class="text-gray-300 italic mb-4">You were feeling: <span class="font-bold capitalize">${note.emotion}</span></p>
+                            <p class="text-gray-200 mb-4">${note.note}</p>
+                            ${note.image ? `<img src="${note.image}" alt="Moment from the past" class="w-full h-48 object-cover rounded-lg mb-4"/>` : ''}
+                            ${note.motivationalMessage ? `<p class="text-green-400 font-medium">${note.motivationalMessage}</p>` : ''}
+                        `;
+                        unlockedNotesList.appendChild(noteElement);
+                    } else {
+                        // Locked note
+                        noteElement.innerHTML = `
+                            <h3 class="text-xl font-semibold mb-2 text-gray-400">Locked Note</h3>
+                            <p class="text-gray-500">This note will be unlocked on:</p>
+                            <p class="text-blue-400 font-bold text-lg">${noteDate.toLocaleDateString()}</p>
+                        `;
+                        lockedNotesList.appendChild(noteElement);
+                    }
+                });
+                
+                // Update the dashboard with the new data
+                updateDashboard(notes);
+            });
+        };
+
+        // Initial authentication on page load
+        window.onload = authenticateUser;
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .container {
+            max-width: 900px;
+        }
+        .card {
+            @apply bg-white dark:bg-gray-800 p-6 rounded-xl shadow-lg flex items-start space-x-4;
+        }
+        .icon-container {
+            @apply p-4 rounded-full flex-shrink-0;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="container mx-auto p-8 bg-gray-950 rounded-3xl shadow-2xl space-y-12">
+        <!-- Header -->
+        <header class="text-center space-y-2">
+            <h1 class="text-5xl font-extrabold text-blue-500">Future Me</h1>
+            <p class="text-gray-400 text-lg">Send a note to your future self.</p>
+            <p id="user-id-display" class="text-sm font-mono text-gray-500"></p>
+        </header>
+
+        <!-- Analytics Dashboard -->
+        <section>
+            <h2 class="text-3xl font-bold mb-6 text-blue-400">Analytics Dashboard</h2>
+            <div class="space-y-8">
+                <!-- KPI Cards -->
+                <div class="grid md:grid-cols-4 gap-6">
+                    <div class="card">
+                        <div class="icon-container bg-blue-100 text-blue-500">
+                            <i class="ph-file-text-bold text-3xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-400 text-sm">Total Notes</p>
+                            <p id="total-notes" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="icon-container bg-green-100 text-green-500">
+                            <i class="ph-lock-open-bold text-3xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-400 text-sm">Unlocked Notes</p>
+                            <p id="unlocked-notes" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="icon-container bg-orange-100 text-orange-500">
+                            <i class="ph-lock-key-bold text-3xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-400 text-sm">Locked Notes</p>
+                            <p id="locked-notes" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="icon-container bg-purple-100 text-purple-500">
+                            <i class="ph-smiley-blank-bold text-3xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-400 text-sm">Total Moods Tracked</p>
+                            <p id="total-moods" class="text-2xl font-bold text-white">0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Engagement Summary -->
+                <div class="bg-gray-800 p-6 rounded-2xl shadow-inner">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-300">Engagement Summary</h3>
+                    <div class="grid md:grid-cols-3 gap-6 text-center">
+                        <div>
+                            <p id="unlocked-percentage" class="text-4xl font-extrabold text-blue-500">0%</p>
+                            <p class="text-gray-400 mt-1">Notes Unlocked</p>
+                        </div>
+                        <div>
+                            <p id="active-days" class="text-4xl font-extrabold text-green-500">0</p>
+                            <p class="text-gray-400 mt-1">Active Days This Week</p>
+                        </div>
+                        <div>
+                            <p id="interactions-this-week" class="text-4xl font-extrabold text-purple-500">0</p>
+                            <p class="text-gray-400 mt-1">Interactions This Week</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notes Activity Over Time (Chart) -->
+                <div class="bg-gray-800 p-6 rounded-2xl shadow-inner">
+                    <h3 class="text-xl font-semibold mb-4 text-gray-300">Notes Activity Over Time</h3>
+                    <div id="notes-activity-chart" class="flex justify-around items-end h-[150px] space-x-2">
+                        <!-- Chart bars will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Content -->
+        <main class="grid lg:grid-cols-2 gap-12">
+            <!-- Left Panel: Note Creation -->
+            <div class="bg-gray-800 p-8 rounded-2xl shadow-inner">
+                <h2 class="text-3xl font-bold mb-6 text-blue-400">Create a New Note</h2>
+                <form id="note-form" class="space-y-6">
+                    <div>
+                        <label for="note-text" class="block text-gray-300 font-medium mb-2">Your Note:</label>
+                        <textarea id="note-text" rows="6" class="w-full p-4 rounded-xl bg-gray-700 text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Dear Future Me..."></textarea>
+                    </div>
+                    <div>
+                        <label for="unlock-date" class="block text-gray-300 font-medium mb-2">Unlock Date:</label>
+                        <input type="date" id="unlock-date" class="w-full p-4 rounded-xl bg-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition" required>
+                    </div>
+                    <div>
+                        <label for="emotion" class="block text-gray-300 font-medium mb-2">How are you feeling?</label>
+                        <select id="emotion" class="w-full p-4 rounded-xl bg-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                            <option value="happy">😄 Happy</option>
+                            <option value="excited">🤩 Excited</option>
+                            <option value="calm">😌 Calm</option>
+                            <option value="sad">😔 Sad</option>
+                            <option value="anxious">😬 Anxious</option>
+                            <option value="tired">🥱 Tired</option>
+                            <option value="angry">😡 Angry</option>
+                            <option value="other">🤷 Other</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="image-upload" class="block text-gray-300 font-medium mb-2">Add an Image (Optional):</label>
+                        <input type="file" id="image-upload" accept="image/*" class="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-500 file:text-white hover:file:bg-blue-600 transition">
+                    </div>
+                    <button type="submit" class="w-full py-4 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-lg shadow-lg transform hover:scale-105 transition duration-300">Lock Note</button>
+                    <div id="message-box" class="p-4 mt-4 text-center rounded-lg opacity-0 transition-all duration-300 transform -translate-y-2"></div>
+                </form>
+            </div>
+
+            <!-- Right Panel: Notes Display -->
+            <div class="space-y-8">
+                <div>
+                    <h2 class="text-3xl font-bold mb-4 text-green-400">Unlocked Notes</h2>
+                    <div id="unlocked-notes-list" class="space-y-6">
+                        <!-- Unlocked notes will be appended here -->
+                    </div>
+                    <p id="no-unlocked-notes" class="text-gray-500 italic mt-4 hidden">No notes unlocked yet.</p>
+                </div>
+
+                <div>
+                    <h2 class="text-3xl font-bold mb-4 text-blue-400">Locked Notes</h2>
+                    <div id="locked-notes-list" class="space-y-6">
+                        <!-- Locked notes will be appended here -->
+                    </div>
+                    <p id="no-locked-notes" class="text-gray-500 italic mt-4 hidden">No locked notes found.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>

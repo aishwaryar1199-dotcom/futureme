@@ -1,5 +1,5 @@
 Future Me – Digital Notes to Your Future Self
-Future Me is a web application that allows users to write personal notes, attach images, and lock them to be unlocked on a future date. It also offers mood-based motivational support to help users stay positive and inspired. The app is fully private—only the user can view their notes.
+Future Me is a web application that allows users to write personal notes, attach images, and lock them to be unlocked on a future date. It also offers mood based motivational support to help users stay positive and inspired. The app is fully private only the user can view their notes.
 
 Features
 Create Notes: Write text notes to your future self.

@@ -22,23 +22,19 @@ Fonts: Inter (Google Fonts)
 
 
 Usage
-git clone https://github.com/aishwarya.r1199-dotcom/future-me.git
-
+"https://github.com/aishwaryar1199-dotcom/futureme.git"
 
 Open index.html in a browser.
 Start creating notes:
 Enter your note text.
 Choose an unlock date.
 Select your current mood.
-
 Optionally upload an image.
-
 Click Lock Note.
 View unlocked and locked notes in the right panel.
 Track your note interactions and mood stats on the dashboard.
 
 How It Works
-
 Notes are stored in Firebase Firestore under each user’s private collection.
 When the unlock date is reached, the note appears in the Unlocked Notes section.
 A basic sentiment check detects negative emotions and displays motivational messages.
@@ -49,5 +45,4 @@ Roadmap / Future Improvements
 Add user accounts for persistent login across devices.
 Enable editing and deleting notes.
 Add mood history trends with advanced analytics.
-
 Integrate push notifications when a note is unlocked.
